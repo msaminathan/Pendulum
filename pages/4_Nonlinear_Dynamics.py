@@ -1,8 +1,11 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, FFMpegWriter
 import sys
 import os
+import tempfile
+import hashlib
 
 # Add parent directory to path to import double_pendulum
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -299,6 +302,115 @@ with col3:
     ax_traj.set_ylim(-max_range, max_range)
     
     st.pyplot(fig_traj)
+    
+    # Create animated trajectory trace
+    st.subheader("Animated Trajectory Traces")
+    
+    # Create animation function
+    def create_trajectory_animation(x1, y1, x2, y2, L1, L2, fps=30, duration=10):
+        """Create MP4 animation of trajectory traces"""
+        # Calculate frame step to match desired duration
+        total_frames = int(duration * fps)
+        frame_step = max(1, len(x1) // total_frames)
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(10, 10))
+        
+        # Set up axes
+        max_range = max(L1 + L2, np.max(np.abs(x2)), np.max(np.abs(y2))) * 1.2
+        ax.set_xlim(-max_range, max_range)
+        ax.set_ylim(-max_range, max_range)
+        ax.set_aspect('equal')
+        ax.set_xlabel('X Position (m)', fontsize=12)
+        ax.set_ylabel('Y Position (m)', fontsize=12)
+        ax.set_title('Nonlinear Trajectory Traces Animation', fontsize=14, weight='bold')
+        ax.grid(True, alpha=0.3)
+        
+        # Initialize empty lines
+        line1, = ax.plot([], [], 'b-', linewidth=1.5, alpha=0.6, label='Top Mass Trace')
+        line2, = ax.plot([], [], 'r-', linewidth=1.5, alpha=0.6, label='Bottom Mass Trace')
+        
+        # Initialize markers for current positions
+        marker1, = ax.plot([], [], 'bo', markersize=10, label='Top Mass')
+        marker2, = ax.plot([], [], 'ro', markersize=10, label='Bottom Mass')
+        
+        # Initialize arm lines
+        arm1, = ax.plot([], [], 'b-', linewidth=2, alpha=0.5)
+        arm2, = ax.plot([], [], 'r-', linewidth=2, alpha=0.5)
+        
+        # Pivot point
+        ax.plot(0, 0, 'ko', markersize=12, label='Pivot')
+        
+        ax.legend(fontsize=10, loc='upper right')
+        
+        def animate(frame):
+            idx = min(frame * frame_step, len(x1) - 1)
+            
+            # Update traces
+            line1.set_data(x1[:idx+1], y1[:idx+1])
+            line2.set_data(x2[:idx+1], y2[:idx+1])
+            
+            # Update markers
+            marker1.set_data([x1[idx]], [y1[idx]])
+            marker2.set_data([x2[idx]], [y2[idx]])
+            
+            # Update arms
+            arm1.set_data([0, x1[idx]], [0, y1[idx]])
+            arm2.set_data([x1[idx], x2[idx]], [y1[idx], y2[idx]])
+            
+            return line1, line2, marker1, marker2, arm1, arm2
+        
+        # Create animation
+        anim = FuncAnimation(fig, animate, frames=total_frames, 
+                            interval=1000/fps, blit=True, repeat=True)
+        
+        # Save to temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+        temp_file.close()
+        
+        writer = FFMpegWriter(fps=fps, bitrate=1800)
+        anim.save(temp_file.name, writer=writer)
+        plt.close(fig)
+        
+        return temp_file.name
+    
+    # Create a unique key based on parameters for caching
+    param_hash = hashlib.md5(
+        f"{L1_nl}_{L2_nl}_{m1_nl}_{m2_nl}_{theta1_0_nl}_{theta2_0_nl}_{omega1_0_nl}_{omega2_0_nl}_{t_max_nl}_{dt_nl}".encode()
+    ).hexdigest()
+    cache_key = f"anim_{param_hash}"
+    
+    # Button to generate animation
+    if st.button("🎬 Generate Animation", key="generate_anim_btn", type="primary"):
+        with st.spinner("Creating animation... This may take a moment."):
+            try:
+                anim_file = create_trajectory_animation(
+                    x1_nl, y1_nl, x2_nl, y2_nl, L1_nl, L2_nl, fps=30, duration=10
+                )
+                st.session_state[cache_key] = anim_file
+                st.success("Animation created successfully!")
+            except Exception as e:
+                st.error(f"Error creating animation: {str(e)}")
+                st.info("Make sure ffmpeg is installed. On Linux: `sudo apt-get install ffmpeg`")
+    
+    # Display animation if available
+    if cache_key in st.session_state and os.path.exists(st.session_state[cache_key]):
+        anim_file = st.session_state[cache_key]
+        st.markdown("**Animation Preview:**")
+        with open(anim_file, 'rb') as video_file:
+            video_bytes = video_file.read()
+            st.video(video_bytes)
+        
+        # Download button
+        st.download_button(
+            label="📥 Download Animation (MP4)",
+            data=video_bytes,
+            file_name="nonlinear_trajectory_traces.mp4",
+            mime="video/mp4",
+            key="download_anim"
+        )
+    else:
+        st.info("👆 Click the button above to generate an animated MP4 of the trajectory traces.")
 
 with col4:
     st.subheader("Phase Space")
